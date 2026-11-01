@@ -13,7 +13,7 @@ pub struct TaskControlBlock {
     /// The task context
     pub task_cx: TaskContext,
     /// Number of calls made by this task for each syscall id.
-    pub syscall_count: [usize; MAX_SYSCALL_NUM],
+    pub syscall_count: [u32; MAX_SYSCALL_NUM],
 }
 
 /// The status of a task
