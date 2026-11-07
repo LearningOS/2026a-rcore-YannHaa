@@ -37,7 +37,7 @@ pub use processor::{
     current_user_token, run_tasks, schedule, take_current_task,
 };
 pub use signal::SignalFlags;
-pub use task::{TaskControlBlock, TaskStatus};
+pub use task::{TaskControlBlock, TaskStatus, WaitResource};
 
 /// Make current task suspended and switch to the next task
 pub fn suspend_current_and_run_next() {
@@ -56,6 +56,20 @@ pub fn suspend_current_and_run_next() {
     add_task(task);
     // jump to scheduling cycle
     schedule(task_cx_ptr);
+}
+
+/// Take and clear the deadlock-detected flag of the current thread.
+pub fn take_deadlock_detected() -> bool {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let detected = inner.deadlock_detected;
+    inner.deadlock_detected = false;
+    detected
+}
+
+/// Set the priority of the current thread.
+pub fn set_current_priority(priority: usize) -> isize {
+    manager::TaskManager::set_priority(&current_task().unwrap(), priority)
 }
 
 /// Make current task blocked and switch to the next task.

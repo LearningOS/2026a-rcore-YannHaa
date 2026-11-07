@@ -7,6 +7,22 @@ use crate::{mm::PhysPageNum, sync::UPSafeCell};
 use alloc::sync::{Arc, Weak};
 use core::cell::RefMut;
 
+/// Basic scheduling parameters used by the stride scheduler.
+pub(crate) const BIG_STRIDE: usize = 1 << 20;
+/// Default priority of a newly created thread.
+const DEFAULT_PRIORITY: usize = 16;
+
+/// The resource a thread is currently waiting for.
+#[derive(Copy, Clone, PartialEq)]
+pub enum WaitResource {
+    /// blocking mutex
+    Mutex(usize),
+    /// semaphore
+    Semaphore(usize),
+    /// condition variable
+    Condvar(usize),
+}
+
 /// Task control block structure
 pub struct TaskControlBlock {
     /// immutable
@@ -41,6 +57,16 @@ pub struct TaskControlBlockInner {
     pub task_status: TaskStatus,
     /// It is set when active exit or execution error occurs
     pub exit_code: Option<i32>,
+    /// Scheduling priority
+    pub priority: usize,
+    /// Stride corresponding to the priority
+    pub stride: usize,
+    /// Accumulated stride used to choose the next thread
+    pub pass: usize,
+    /// The synchronization resource this thread is waiting for
+    pub waiting_on: Option<WaitResource>,
+    /// Set when a would-be blocking operation is rejected by deadlock detection
+    pub deadlock_detected: bool,
 }
 
 impl TaskControlBlockInner {
@@ -75,6 +101,11 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    priority: DEFAULT_PRIORITY,
+                    stride: BIG_STRIDE / DEFAULT_PRIORITY,
+                    pass: 0,
+                    waiting_on: None,
+                    deadlock_detected: false,
                 })
             },
         }

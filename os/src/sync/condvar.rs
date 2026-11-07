@@ -1,7 +1,9 @@
 //! Conditian variable
 
 use crate::sync::{Mutex, UPSafeCell};
-use crate::task::{block_current_and_run_next, current_task, wakeup_task, TaskControlBlock};
+use crate::task::{
+    block_current_and_run_next, current_task, wakeup_task, TaskControlBlock, WaitResource,
+};
 use alloc::{collections::VecDeque, sync::Arc};
 
 /// Condition variable structure
@@ -39,10 +41,13 @@ impl Condvar {
     pub fn wait(&self, mutex: Arc<dyn Mutex>) {
         trace!("kernel: Condvar::wait_with_mutex");
         mutex.unlock();
+        let task = current_task().unwrap();
+        task.inner_exclusive_access().waiting_on = Some(WaitResource::Condvar(0));
         let mut inner = self.inner.exclusive_access();
-        inner.wait_queue.push_back(current_task().unwrap());
+        inner.wait_queue.push_back(task.clone());
         drop(inner);
         block_current_and_run_next();
+        task.inner_exclusive_access().waiting_on = None;
         mutex.lock();
     }
 }

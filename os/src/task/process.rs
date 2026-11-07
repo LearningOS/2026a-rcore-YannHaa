@@ -49,6 +49,8 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// whether deadlock detection is enabled in this process
+    pub deadlock_detect_enabled: bool,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +121,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
                 })
             },
         });
@@ -245,6 +248,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
                 })
             },
         });
@@ -278,6 +282,60 @@ impl ProcessControlBlock {
         add_task(task);
         child
     }
+    /// Create a new process from an ELF image without copying the current address space.
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let (memory_set, ustack_base, entry_point) = MemorySet::from_elf(elf_data);
+        let pid = pid_alloc();
+        let parent = self.inner_exclusive_access();
+        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        for fd in parent.fd_table.iter() {
+            new_fd_table.push(fd.clone());
+        }
+        let child = Arc::new(Self {
+            pid,
+            inner: unsafe {
+                UPSafeCell::new(ProcessControlBlockInner {
+                    is_zombie: false,
+                    memory_set,
+                    parent: Some(Arc::downgrade(self)),
+                    children: Vec::new(),
+                    exit_code: 0,
+                    fd_table: new_fd_table,
+                    signals: SignalFlags::empty(),
+                    tasks: Vec::new(),
+                    task_res_allocator: RecycleAllocator::new(),
+                    mutex_list: Vec::new(),
+                    semaphore_list: Vec::new(),
+                    condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                })
+            },
+        });
+        drop(parent);
+        self.inner_exclusive_access().children.push(Arc::clone(&child));
+        let task = Arc::new(TaskControlBlock::new(
+            Arc::clone(&child),
+            ustack_base,
+            true,
+        ));
+        let task_inner = task.inner_exclusive_access();
+        let trap_cx = task_inner.get_trap_cx();
+        let ustack_top = task_inner.res.as_ref().unwrap().ustack_top();
+        let kstack_top = task.kstack.get_top();
+        drop(task_inner);
+        *trap_cx = TrapContext::app_init_context(
+            entry_point,
+            ustack_top,
+            KERNEL_SPACE.exclusive_access().token(),
+            kstack_top,
+            trap_handler as usize,
+        );
+        child.inner_exclusive_access().tasks.push(Some(Arc::clone(&task)));
+        insert_into_pid2process(child.getpid(), Arc::clone(&child));
+        add_task(task);
+        child
+    }
+
     /// get pid
     pub fn getpid(&self) -> usize {
         self.pid.0
