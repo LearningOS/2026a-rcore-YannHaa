@@ -55,6 +55,11 @@ pub fn suspend_current_and_run_next() {
     schedule(task_cx_ptr);
 }
 
+/// Set the priority of the current process.
+pub fn set_current_priority(priority: usize) -> isize {
+    TaskManager::set_priority(&current_task().unwrap(), priority)
+}
+
 /// pid of usertests app in make run TEST=1
 pub const IDLE_PID: usize = 0;
 
