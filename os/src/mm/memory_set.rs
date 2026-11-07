@@ -221,6 +221,56 @@ impl MemorySet {
             elf.header.pt2.entry_point() as usize,
         )
     }
+    /// Map a new user area [`start`, `start + len`) with the given permission.
+    /// Return false when the request is not page-aligned or overlaps an existing area.
+    pub fn mmap(&mut self, start: VirtAddr, len: usize, permission: MapPermission) -> bool {
+        if len == 0 || !start.aligned() {
+            return false;
+        }
+        let end = match start.0.checked_add(len) {
+            Some(end) if end > start.0 => end,
+            _ => return false,
+        };
+        let start_vpn = start.floor();
+        let end_vpn = VirtAddr::from(end).ceil();
+        if end_vpn <= start_vpn {
+            return false;
+        }
+        for area in self.areas.iter() {
+            if area.vpn_range.get_start() < end_vpn && start_vpn < area.vpn_range.get_end() {
+                return false;
+            }
+        }
+        self.push(
+            MapArea::new(
+                start,
+                VirtAddr::from(end),
+                MapType::Framed,
+                permission | MapPermission::U,
+            ),
+            None,
+        );
+        true
+    }
+
+    /// Unmap an existing area that exactly matches [`start`, `start + len`).
+    pub fn munmap(&mut self, start: VirtAddr, len: usize) -> bool {
+        if len == 0 || !start.aligned() || len % PAGE_SIZE != 0 {
+            return false;
+        }
+        let start_vpn = start.floor();
+        let end_vpn = VirtPageNum(start_vpn.0 + len / PAGE_SIZE);
+        if let Some(index) = self.areas.iter().position(|area| {
+            area.vpn_range.get_start() == start_vpn && area.vpn_range.get_end() == end_vpn
+        }) {
+            let mut area = self.areas.remove(index);
+            area.unmap(&mut self.page_table);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Change page table by writing satp CSR Register.
     pub fn activate(&self) {
         let satp = self.page_table.token();
